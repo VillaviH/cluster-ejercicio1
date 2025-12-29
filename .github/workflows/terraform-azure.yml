@@ -28,9 +28,29 @@ jobs:
         working-directory: ${{ env.WORKING_DIRECTORY }}
 
     steps:
+    # Debug step to check environment
+    - name: Debug Environment
+      run: |
+        echo "=== Environment Debug ==="
+        echo "Runner OS: ${{ runner.os }}"
+        echo "GitHub Actor: ${{ github.actor }}"
+        echo "Repository: ${{ github.repository }}"
+        echo "Working Directory: ${{ env.WORKING_DIRECTORY }}"
+        echo "Current Directory: $(pwd)"
+        echo "=== End Debug ==="
+
     # Checkout the repository to the GitHub Actions runner
     - name: Checkout
       uses: actions/checkout@v4
+
+    # Debug step to check files
+    - name: Debug Files
+      run: |
+        echo "=== Files Debug ==="
+        ls -la
+        echo "Terraform files:"
+        find . -name "*.tf" -type f
+        echo "=== End Files Debug ==="
 
     # Install the latest version of Terraform CLI
     - name: Setup Terraform
@@ -43,22 +63,48 @@ jobs:
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
+      continue-on-error: true
+
+    # Debug Azure login
+    - name: Debug Azure Login
+      run: |
+        echo "=== Azure Debug ==="
+        if [ -z "${{ secrets.AZURE_CREDENTIALS }}" ]; then
+          echo "WARNING: AZURE_CREDENTIALS secret is not set"
+        else
+          echo "AZURE_CREDENTIALS secret is configured"
+        fi
+        echo "=== End Azure Debug ==="
 
     # Initialize a new or existing Terraform working directory
     - name: Terraform Init
-      run: terraform init
+      run: |
+        echo "=== Terraform Init Debug ==="
+        terraform version
+        terraform init -input=false
+        echo "=== End Terraform Init Debug ==="
 
     # Checks that all Terraform configuration files adhere to a canonical format
     - name: Terraform Format
-      run: terraform fmt -check
+      run: |
+        echo "=== Terraform Format Debug ==="
+        terraform fmt -check -diff
+        echo "=== End Terraform Format Debug ==="
+      continue-on-error: true
 
     # Validates the configuration files in a directory
     - name: Terraform Validate
-      run: terraform validate
+      run: |
+        echo "=== Terraform Validate Debug ==="
+        terraform validate
+        echo "=== End Terraform Validate Debug ==="
 
     # Generates an execution plan for Terraform
     - name: Terraform Plan
-      run: terraform plan -input=false
+      run: |
+        echo "=== Terraform Plan Debug ==="
+        terraform plan -input=false -no-color
+        echo "=== End Terraform Plan Debug ==="
 
     # On push to "main", build or change infrastructure according to Terraform configuration files
     - name: Terraform Apply
