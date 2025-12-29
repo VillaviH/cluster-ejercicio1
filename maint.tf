@@ -12,6 +12,9 @@ terraform {
 
 provider "azurerm" {
   features {}
+  
+  # Use service principal authentication in CI/CD
+  use_cli = false
 }
 
 resource "azurerm_resource_group" "rg" {

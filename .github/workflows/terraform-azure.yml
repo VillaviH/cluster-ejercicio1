@@ -65,6 +65,14 @@ jobs:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
       continue-on-error: true
 
+    # Set Azure credentials as environment variables for Terraform
+    - name: Set Azure Environment Variables
+      run: |
+        echo "ARM_CLIENT_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}" >> $GITHUB_ENV
+        echo "ARM_CLIENT_SECRET=${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}" >> $GITHUB_ENV
+        echo "ARM_SUBSCRIPTION_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}" >> $GITHUB_ENV
+        echo "ARM_TENANT_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}" >> $GITHUB_ENV
+
     # Debug Azure login
     - name: Debug Azure Login
       run: |
@@ -73,6 +81,9 @@ jobs:
           echo "WARNING: AZURE_CREDENTIALS secret is not set"
         else
           echo "AZURE_CREDENTIALS secret is configured"
+          echo "Client ID: $ARM_CLIENT_ID"
+          echo "Subscription ID: $ARM_SUBSCRIPTION_ID"
+          echo "Tenant ID: $ARM_TENANT_ID"
         fi
         echo "=== End Azure Debug ==="
 
