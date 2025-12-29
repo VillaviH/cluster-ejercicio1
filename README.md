@@ -1,3 +1,2 @@
 # cluster-ejercicio1
-## prueba
-### pruebas 1
+## pruebas de ejercicio con cluster de azure
