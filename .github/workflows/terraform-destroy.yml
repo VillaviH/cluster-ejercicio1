@@ -1,0 +1,91 @@
+name: 'Terraform Destroy Infrastructure'
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm destruction of infrastructure'
+        required: true
+        default: ''
+
+env:
+  TF_VERSION: '1.5.0'
+  WORKING_DIRECTORY: '.'
+
+jobs:
+  destroy:
+    name: 'Terraform Destroy'
+    runs-on: ubuntu-latest
+    environment: production
+    
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+
+    steps:
+    # Safety check - only proceed if user typed DESTROY
+    - name: Confirm Destroy
+      run: |
+        if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+          echo "❌ Destruction cancelled. You must type 'DESTROY' to confirm."
+          exit 1
+        fi
+        echo "✅ Destruction confirmed. Proceeding..."
+
+    # Checkout the repository
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # Install Terraform
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    # Login to Azure using service principal
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    # Set Azure credentials as environment variables for Terraform
+    - name: Set Azure Environment Variables
+      run: |
+        echo "ARM_CLIENT_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}" >> $GITHUB_ENV
+        echo "ARM_CLIENT_SECRET=${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}" >> $GITHUB_ENV
+        echo "ARM_SUBSCRIPTION_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}" >> $GITHUB_ENV
+        echo "ARM_TENANT_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}" >> $GITHUB_ENV
+
+    # Initialize Terraform
+    - name: Terraform Init
+      run: terraform init
+
+    # Show what will be destroyed
+    - name: Terraform Plan Destroy
+      run: |
+        echo "=== Resources that will be DESTROYED ==="
+        terraform plan -destroy -input=false -no-color
+        echo "=== End Destroy Plan ==="
+
+    # Wait before destruction (gives time to cancel if needed)
+    - name: Wait Before Destroy
+      run: |
+        echo "⏳ Waiting 30 seconds before destruction..."
+        echo "Cancel the workflow now if you changed your mind!"
+        sleep 30
+        echo "🚨 Starting destruction in 5 seconds..."
+        sleep 5
+
+    # Destroy the infrastructure
+    - name: Terraform Destroy
+      run: |
+        echo "🔥 DESTROYING INFRASTRUCTURE..."
+        terraform destroy -auto-approve -input=false
+        echo "✅ Infrastructure destroyed successfully"
+
+    # Confirmation message
+    - name: Destruction Complete
+      run: |
+        echo "🎯 Terraform destroy completed successfully!"
+        echo "All resources have been removed from Azure."
