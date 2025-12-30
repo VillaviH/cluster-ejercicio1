@@ -80,38 +80,71 @@ jobs:
     # Destroy the infrastructure
     - name: Terraform Destroy
       id: terraform_destroy
-      continue-on-error: true
       run: |
         echo "🔥 DESTROYING INFRASTRUCTURE WITH TERRAFORM..."
-        terraform destroy -auto-approve -input=false
-        echo "✅ Terraform destroy completed"
-
-    # Fallback: Use Azure CLI if Terraform fails
-    - name: Fallback - Azure CLI Destroy
-      if: steps.terraform_destroy.outcome == 'failure'
-      run: |
-        echo "⚠️ Terraform destroy failed, using Azure CLI as fallback..."
         
-        # List all resource groups that match our pattern
-        echo "🔍 Finding resource groups to delete..."
+        # Capture terraform destroy output
+        DESTROY_OUTPUT=$(terraform destroy -auto-approve -input=false 2>&1)
+        echo "$DESTROY_OUTPUT"
+        
+        # Check if terraform actually destroyed something
+        if echo "$DESTROY_OUTPUT" | grep -q "No changes. No objects need to be destroyed"; then
+          echo "⚠️ Terraform found no objects to destroy, but resources may exist in Azure"
+          echo "terraform_found_nothing=true" >> $GITHUB_OUTPUT
+        else
+          echo "✅ Terraform destroy completed normally"
+          echo "terraform_found_nothing=false" >> $GITHUB_OUTPUT
+        fi
+
+    # Check if resources actually exist in Azure
+    - name: Check Azure Resources
+      id: check_resources
+      run: |
+        echo "🔍 Checking if resources actually exist in Azure..."
+        
+        EXISTING_RESOURCES=""
+        
+        # Check main resource group
+        if az group show --name myTFResourceGroup &>/dev/null; then
+          echo "⚠️ Found: myTFResourceGroup"
+          EXISTING_RESOURCES="$EXISTING_RESOURCES myTFResourceGroup"
+        fi
+        
+        # Check tfstate resource group
+        if az group show --name tfstate-rg &>/dev/null; then
+          echo "⚠️ Found: tfstate-rg"
+          EXISTING_RESOURCES="$EXISTING_RESOURCES tfstate-rg"
+        fi
+        
+        if [ -n "$EXISTING_RESOURCES" ]; then
+          echo "resources_exist=true" >> $GITHUB_OUTPUT
+          echo "existing_resources=$EXISTING_RESOURCES" >> $GITHUB_OUTPUT
+          echo "🚨 Resources exist in Azure but Terraform doesn't know about them!"
+        else
+          echo "resources_exist=false" >> $GITHUB_OUTPUT
+          echo "✅ No resources found in Azure"
+        fi
+
+    # Force delete with Azure CLI if resources exist but Terraform didn't destroy them
+    - name: Force Delete with Azure CLI
+      if: steps.terraform_destroy.outputs.terraform_found_nothing == 'true' && steps.check_resources.outputs.resources_exist == 'true'
+      run: |
+        echo "🚨 TERRAFORM STATE OUT OF SYNC - USING AZURE CLI TO FORCE DELETE"
+        echo "Resources to delete: ${{ steps.check_resources.outputs.existing_resources }}"
         
         # Delete main resource group
         if az group show --name myTFResourceGroup &>/dev/null; then
-          echo "🔥 Deleting myTFResourceGroup..."
+          echo "🔥 Force deleting myTFResourceGroup..."
           az group delete --name myTFResourceGroup --yes --no-wait
-        else
-          echo "myTFResourceGroup not found"
         fi
         
-        # Delete tfstate resource group if it exists
+        # Delete tfstate resource group
         if az group show --name tfstate-rg &>/dev/null; then
-          echo "🔥 Deleting tfstate-rg..."
+          echo "🔥 Force deleting tfstate-rg..."
           az group delete --name tfstate-rg --yes --no-wait
-        else
-          echo "tfstate-rg not found"
         fi
         
-        echo "✅ Azure CLI cleanup initiated"
+        echo "✅ Azure CLI deletion initiated"
 
     # Verify destruction completed
     - name: Verify Destruction
