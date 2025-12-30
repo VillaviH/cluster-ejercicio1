@@ -73,35 +73,13 @@ jobs:
         echo "ARM_SUBSCRIPTION_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}" >> $GITHUB_ENV
         echo "ARM_TENANT_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}" >> $GITHUB_ENV
 
-    # Initialize Terraform (first run creates storage, second run migrates to backend)
-    - name: Terraform Init and Setup Backend
+    # Initialize Terraform (simple local state)
+    - name: Terraform Init
       run: |
-        echo "=== First Init (Local State) ==="
-        terraform init
-        
-        echo "=== Apply to Create Storage Account ==="
-        terraform apply -auto-approve -target=azurerm_resource_group.tfstate -target=azurerm_storage_account.tfstate -target=azurerm_storage_container.tfstate -target=random_string.storage_suffix
-        
-        # Get storage account name
-        STORAGE_ACCOUNT=$(terraform output -raw storage_account_name)
-        echo "Storage account created: $STORAGE_ACCOUNT"
-        
-        # Create backend configuration
-        cat > backend.tf << EOF
-        terraform {
-          backend "azurerm" {
-            resource_group_name  = "tfstate-rg"
-            storage_account_name = "$STORAGE_ACCOUNT"
-            container_name       = "tfstate"
-            key                  = "terraform.tfstate"
-          }
-        }
-        EOF
-        
-        echo "=== Migrating to Remote Backend ==="
-        terraform init -migrate-state -force-copy
-        
-        echo "✅ Backend setup and migration complete!"
+        echo "=== Terraform Init Debug ==="
+        terraform version
+        terraform init -input=false
+        echo "=== End Terraform Init Debug ==="
 
     # Debug Azure login
     - name: Debug Azure Login

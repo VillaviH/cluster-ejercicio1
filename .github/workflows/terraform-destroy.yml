@@ -57,35 +57,6 @@ jobs:
         echo "ARM_SUBSCRIPTION_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}" >> $GITHUB_ENV
         echo "ARM_TENANT_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}" >> $GITHUB_ENV
 
-    # Get backend configuration from existing storage
-    - name: Setup Backend Configuration
-      run: |
-        echo "🔍 Looking for existing storage account..."
-        
-        # Find storage account that starts with 'tfstate'
-        STORAGE_ACCOUNT=$(az storage account list --resource-group tfstate-rg --query "[?starts_with(name, 'tfstate')].name" -o tsv | head -1)
-        
-        if [ -z "$STORAGE_ACCOUNT" ]; then
-          echo "❌ No backend storage found. Run the main workflow first to create infrastructure."
-          exit 1
-        fi
-        
-        echo "✅ Found storage account: $STORAGE_ACCOUNT"
-        
-        # Create backend configuration
-        cat > backend.tf << EOF
-        terraform {
-          backend "azurerm" {
-            resource_group_name  = "tfstate-rg"
-            storage_account_name = "$STORAGE_ACCOUNT"
-            container_name       = "tfstate"
-            key                  = "terraform.tfstate"
-          }
-        }
-        EOF
-        
-        echo "Backend configuration created"
-
     # Initialize Terraform
     - name: Terraform Init
       run: terraform init
@@ -108,10 +79,79 @@ jobs:
 
     # Destroy the infrastructure
     - name: Terraform Destroy
+      id: terraform_destroy
+      continue-on-error: true
       run: |
-        echo "🔥 DESTROYING INFRASTRUCTURE..."
+        echo "🔥 DESTROYING INFRASTRUCTURE WITH TERRAFORM..."
         terraform destroy -auto-approve -input=false
-        echo "✅ Infrastructure destroyed successfully"
+        echo "✅ Terraform destroy completed"
+
+    # Fallback: Use Azure CLI if Terraform fails
+    - name: Fallback - Azure CLI Destroy
+      if: steps.terraform_destroy.outcome == 'failure'
+      run: |
+        echo "⚠️ Terraform destroy failed, using Azure CLI as fallback..."
+        
+        # List all resource groups that match our pattern
+        echo "🔍 Finding resource groups to delete..."
+        
+        # Delete main resource group
+        if az group show --name myTFResourceGroup &>/dev/null; then
+          echo "🔥 Deleting myTFResourceGroup..."
+          az group delete --name myTFResourceGroup --yes --no-wait
+        else
+          echo "myTFResourceGroup not found"
+        fi
+        
+        # Delete tfstate resource group if it exists
+        if az group show --name tfstate-rg &>/dev/null; then
+          echo "🔥 Deleting tfstate-rg..."
+          az group delete --name tfstate-rg --yes --no-wait
+        else
+          echo "tfstate-rg not found"
+        fi
+        
+        echo "✅ Azure CLI cleanup initiated"
+
+    # Verify destruction completed
+    - name: Verify Destruction
+      run: |
+        echo "🔍 Verifying all resources are deleted..."
+        
+        # Wait and check for main resource group
+        echo "Checking myTFResourceGroup..."
+        for i in {1..10}; do
+          if ! az group show --name myTFResourceGroup &>/dev/null; then
+            echo "✅ myTFResourceGroup deleted"
+            break
+          fi
+          echo "Waiting for myTFResourceGroup deletion... ($i/10)"
+          sleep 30
+        done
+        
+        # Check for tfstate resource group
+        echo "Checking tfstate-rg..."
+        for i in {1..10}; do
+          if ! az group show --name tfstate-rg &>/dev/null; then
+            echo "✅ tfstate-rg deleted (or never existed)"
+            break
+          fi
+          echo "Waiting for tfstate-rg deletion... ($i/10)"
+          sleep 30
+        done
+        
+        # Final verification
+        echo "📊 Final resource check..."
+        REMAINING_RGS=$(az group list --query "[?starts_with(name, 'myTF') || starts_with(name, 'tfstate')].name" -o tsv)
+        
+        if [ -z "$REMAINING_RGS" ]; then
+          echo "🎯 SUCCESS: All resources destroyed!"
+          echo "💰 No more costs will be incurred"
+        else
+          echo "⚠️ WARNING: Some resource groups still exist:"
+          echo "$REMAINING_RGS"
+          echo "You may need to delete them manually from Azure Portal"
+        fi
 
     # Confirmation message
     - name: Destruction Complete

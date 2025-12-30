@@ -1,0 +1,70 @@
+name: 'Emergency Resource Cleanup'
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_emergency:
+        description: 'Type "DELETE" to force delete ALL resources (bypasses Terraform)'
+        required: true
+        default: ''
+
+jobs:
+  emergency_cleanup:
+    name: 'Emergency Cleanup'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Confirm Emergency Cleanup
+      run: |
+        if [ "${{ github.event.inputs.confirm_emergency }}" != "DELETE" ]; then
+          echo "❌ Emergency cleanup cancelled. You must type 'DELETE' to confirm."
+          exit 1
+        fi
+        echo "🚨 EMERGENCY CLEANUP CONFIRMED - DELETING ALL RESOURCES"
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Force Delete All Resources
+      run: |
+        echo "🔥 FORCE DELETING ALL PROJECT RESOURCES..."
+        
+        # Get all resource groups that might be related to this project
+        echo "📋 Finding all related resource groups..."
+        az group list --output table
+        
+        # Delete specific resource groups
+        RESOURCE_GROUPS=("myTFResourceGroup" "tfstate-rg")
+        
+        for RG in "${RESOURCE_GROUPS[@]}"; do
+          if az group show --name "$RG" &>/dev/null; then
+            echo "🔥 Force deleting $RG..."
+            az group delete --name "$RG" --yes --no-wait
+          else
+            echo "✅ $RG not found (already deleted)"
+          fi
+        done
+        
+        echo "⏳ Waiting for deletions to complete..."
+        sleep 60
+        
+        # Verify deletion
+        echo "🔍 Verifying cleanup..."
+        REMAINING=$(az group list --query "[?starts_with(name, 'myTF') || starts_with(name, 'tfstate')].name" -o tsv)
+        
+        if [ -z "$REMAINING" ]; then
+          echo "🎯 SUCCESS: All resources deleted!"
+          echo "💰 No costs will be incurred"
+        else
+          echo "⚠️ Some resources may still be deleting:"
+          echo "$REMAINING"
+          echo "Check Azure Portal in a few minutes"
+        fi
+
+    - name: Final Status
+      run: |
+        echo "🏁 Emergency cleanup completed"
+        echo "💡 Check Azure Portal to confirm all resources are gone"
+        echo "💰 This should stop all billing for these resources"
