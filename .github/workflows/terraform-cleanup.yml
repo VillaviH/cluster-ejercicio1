@@ -1,0 +1,101 @@
+name: 'Terraform Complete Cleanup'
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_cleanup:
+        description: 'Type "CLEANUP" to confirm complete cleanup (infrastructure + backend)'
+        required: true
+        default: ''
+
+env:
+  TF_VERSION: '1.5.0'
+  WORKING_DIRECTORY: '.'
+
+jobs:
+  cleanup:
+    name: 'Complete Cleanup'
+    runs-on: ubuntu-latest
+    environment: production
+    
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+
+    steps:
+    # Safety check
+    - name: Confirm Cleanup
+      run: |
+        if [ "${{ github.event.inputs.confirm_cleanup }}" != "CLEANUP" ]; then
+          echo "❌ Cleanup cancelled. You must type 'CLEANUP' to confirm."
+          exit 1
+        fi
+        echo "✅ Complete cleanup confirmed. Proceeding..."
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Set Azure Environment Variables
+      run: |
+        echo "ARM_CLIENT_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}" >> $GITHUB_ENV
+        echo "ARM_CLIENT_SECRET=${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}" >> $GITHUB_ENV
+        echo "ARM_SUBSCRIPTION_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}" >> $GITHUB_ENV
+        echo "ARM_TENANT_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}" >> $GITHUB_ENV
+
+    # Delete infrastructure resource groups directly
+    - name: Delete Infrastructure
+      run: |
+        echo "🔥 Deleting infrastructure resource groups..."
+        
+        # Delete main infrastructure
+        if az group show --name myTFResourceGroup &>/dev/null; then
+          echo "Deleting myTFResourceGroup..."
+          az group delete --name myTFResourceGroup --yes --no-wait
+        else
+          echo "myTFResourceGroup not found"
+        fi
+        
+        # Delete tfstate resource group
+        if az group show --name tfstate-rg &>/dev/null; then
+          echo "Deleting tfstate-rg..."
+          az group delete --name tfstate-rg --yes --no-wait
+        else
+          echo "tfstate-rg not found"
+        fi
+
+    # Wait for deletions to complete
+    - name: Wait for Cleanup
+      run: |
+        echo "⏳ Waiting for resource groups to be deleted..."
+        
+        # Wait for main resource group
+        while az group show --name myTFResourceGroup &>/dev/null; do
+          echo "Waiting for myTFResourceGroup deletion..."
+          sleep 30
+        done
+        
+        # Wait for tfstate resource group
+        while az group show --name tfstate-rg &>/dev/null; do
+          echo "Waiting for tfstate-rg deletion..."
+          sleep 30
+        done
+        
+        echo "✅ All resource groups deleted successfully!"
+
+    - name: Cleanup Complete
+      run: |
+        echo "🎯 Complete cleanup finished!"
+        echo "- Infrastructure deleted"
+        echo "- Backend storage deleted"
+        echo "- Ready for fresh deployment"
