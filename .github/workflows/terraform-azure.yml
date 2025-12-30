@@ -73,13 +73,63 @@ jobs:
         echo "ARM_SUBSCRIPTION_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}" >> $GITHUB_ENV
         echo "ARM_TENANT_ID=${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}" >> $GITHUB_ENV
 
-    # Initialize Terraform (simple local state)
-    - name: Terraform Init
+    # Initialize Terraform with smart backend handling
+    - name: Terraform Init and Backend Setup
       run: |
-        echo "=== Terraform Init Debug ==="
-        terraform version
-        terraform init -input=false
-        echo "=== End Terraform Init Debug ==="
+        echo "=== Smart Backend Setup ==="
+        
+        # Check if backend storage already exists
+        EXISTING_STORAGE=$(az storage account list --resource-group tfstate-rg --query "[?starts_with(name, 'tfstate')].name" -o tsv 2>/dev/null | head -1 || echo "")
+        
+        if [ -n "$EXISTING_STORAGE" ]; then
+          echo "✅ Found existing backend storage: $EXISTING_STORAGE"
+          
+          # Create backend configuration with existing storage
+          cat > backend.tf << EOF
+        terraform {
+          backend "azurerm" {
+            resource_group_name  = "tfstate-rg"
+            storage_account_name = "$EXISTING_STORAGE"
+            container_name       = "tfstate"
+            key                  = "terraform.tfstate"
+          }
+        }
+        EOF
+          
+          echo "🔄 Initializing with existing backend..."
+          terraform init -input=false
+          
+        else
+          echo "🆕 No existing backend found, creating new one..."
+          
+          # First init without backend
+          terraform init -input=false
+          
+          # Create backend storage
+          echo "📦 Creating backend storage..."
+          terraform apply -auto-approve -target=azurerm_resource_group.tfstate -target=azurerm_storage_account.tfstate -target=azurerm_storage_container.tfstate -target=random_string.storage_suffix
+          
+          # Get the created storage account name
+          STORAGE_ACCOUNT=$(terraform output -raw storage_account_name)
+          echo "✅ Created storage account: $STORAGE_ACCOUNT"
+          
+          # Create backend configuration
+          cat > backend.tf << EOF
+        terraform {
+          backend "azurerm" {
+            resource_group_name  = "tfstate-rg"
+            storage_account_name = "$STORAGE_ACCOUNT"
+            container_name       = "tfstate"
+            key                  = "terraform.tfstate"
+          }
+        }
+        EOF
+          
+          echo "🔄 Migrating to remote backend..."
+          terraform init -migrate-state -force-copy
+        fi
+        
+        echo "✅ Backend setup complete!"
 
     # Debug Azure login
     - name: Debug Azure Login
